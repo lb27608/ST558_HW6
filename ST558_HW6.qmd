@@ -1,0 +1,268 @@
+---
+title: "ST 558 Homework 6"
+author: "Lee Bennett"
+format: html
+editor: visual
+---
+
+```{r}
+#| include: false
+
+library(tidyverse)
+library(jsonlite)
+library(httr)
+library(lubridate)
+```
+
+## Conceptual Questions
+
+1.  What is the purpose of the `lapply()` function? What is the equivalent `purrr` function?
+
+> The purpose of `lapply()` is to call a specified function for each element of a list. In `purrr`, the equivalent function is `map()`.
+
+2.  Suppose we have a list called my_list. Each element of the list is a numeric data frame (all columns are numeric). We want use `lapply()` to run the code `cor(numeric_matrix, method = "kendall")` on each element of the list. Write code to do this below! (I’m really trying to ask you how you specify `method = "kendall"` when calling `lapply()`)
+
+> The code that would perform this action is `lapply(X=my_list, FUN=cor, method="kendall")`
+
+3.  What are two advantages of using `purrr` functions instead of the BaseR `apply` family?
+
+> 1.  Functions in `purrr` provide consistent syntax (e.g., the first argument to `map` functions is always the data, which is not the case for the `apply` family).
+> 2.  `purrr` provides useful helper functions that are not available for the base R `apply` family.
+
+4.  What is a side-effect function?
+
+> A function that produces some sort of effect in addition to the value that it is designed to return, such as creating a plot or modifying an object in the environment besides the object that it returns.
+
+5.  Why can you name a variable `sd` in a function and not cause any issues with the `sd` function?
+
+> Because of name masking of objects that takes place as a result of lexical scoping, if you include a variable named `sd` within a custom function, R will mask the `sd` function within the custom function. When `sd` is referenced inside the custom function, R will refer to the variable. Outside the custom function, `sd` will still represent the built-in function for standard deviation.
+
+## Writing R Functions
+
+### RMSE function
+
+First, we'll create a function to compute the root mean square error (RMSE) as a metric for the difference between a vector of observed data (`resp`) and a vector of predictions (`pred`). To allow for missing data, the function includes an unnamed argument (`...`) so that the `rm.na` option can be used with the mean function to remove those missing values:
+
+```{r}
+getRMSE <- function(resp, pred, ...) {
+  if(length(resp) != length(pred)) {
+    stop("Response and prediction vectors must be the same length.")
+  }
+  
+  rmse <- sqrt(mean((resp-pred)^2,...,))
+  return(rmse)
+}
+```
+
+Now we'll create some test data to evaluate the performance of the function, first with a set of values with no missing data:
+
+```{r}
+
+# Generate test data
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10 * x + rnorm(n)
+pred <- predict(lm(resp~ x), data.frame(x))
+
+# Test function with complete data
+getRMSE(resp,pred)
+```
+And now with two of the responses replaced by missing values:
+
+```{r}
+
+# Replace two response values with missing values
+resp[3] <- NA_real_
+resp[45] <- NA_real_
+
+# Test function with and without na.rm=TRUE to remove missings
+
+getRMSE(resp,pred)
+getRMSE(resp,pred, na.rm=TRUE)
+```
+We see that without `na.rm=TRUE`, the function will return `NA` in the presence of a missing response value. When the option to remove missing values is specified, the function returns a valid numeric result.
+
+### MAE function
+
+Now we'll create a similar function to compute the mean absolute error (MAE) based on a response vector and a prediction vector:
+
+```{r}
+getMAE <- function(resp, pred, ...) {
+  if(length(resp) != length(pred)) {
+    stop("Response and prediction vectors must be the same length.")
+  }
+  
+  mae <- mean(abs(resp-pred),...,)
+  return(mae)
+}
+```
+
+As before, we'll create some simulated data to test the MAE function:
+
+```{r}
+
+# Generate test data
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10 * x + rnorm(n)
+pred <- predict(lm(resp~ x), data.frame(x))
+
+# Test function with complete data
+getMAE(resp,pred)
+```
+
+So far, so good. Let's make sure it works when missing data is present in the response vector:
+
+```{r}
+
+# Replace two response values with missing values
+resp[3] <- NA_real_
+resp[45] <- NA_real_
+
+# Test function with and without na.rm=TRUE to remove missings
+
+getMAE(resp,pred)
+getMAE(resp,pred, na.rm=TRUE)
+```
+We see the same sort of result here that we saw with `getRMSE`.
+
+### Wrapper function
+
+The final step for this task is to create a wrapper function that calls the getRMSE and getMAE helper functions. This wrapper (`getDev`) allows a user to specify the error metrics to be returned via the `metrics=` option.
+
+```{r}
+#Create wrapper function getDev to compute RMSE and/or MAE
+
+getDev <- function(resp,pred,metrics="RMSE,MAE",...){
+  if (!(is.vector(resp) & is.numeric(resp) | !(is.vector(pred) & is.numeric(pred)))) {
+    stop("Both response and predicted must be numeric vectors.")
+  }
+  
+  if(str_detect(metrics,"RMSE")) {
+    rmse_result <- getRMSE(resp=resp,pred=pred,...)
+  } else rmse_result=NA;
+  
+  if(str_detect(metrics,"MAE")) {
+    mae_result <- getMAE(resp=resp,pred=pred,...)
+  } else mae_result=NA;
+  
+  final<-list(RMSE=rmse_result,MAE=mae_result)
+  return(final)
+}
+```
+
+The first test of this wrapper function will use another simulated dataset to verify that it works for complete data:
+
+```{r}
+set.seed(10)
+n <- 100
+x <- runif(n)
+resp <- 3 + 10 * x + rnorm(n)
+pred <- predict(lm(resp~ x), data.frame(x))
+
+#Return both RMSE and MAE by default
+getDev(resp,pred)
+```
+
+Next, we'll check the function to make sure it returns specified metrics individually:
+
+```{r}
+getDev(resp,pred,metrics="RMSE")
+```
+
+```{r}
+getDev(resp,pred,metrics="MAE")
+```
+Does it work when missing data is present? Let's find out.
+
+```{r}
+
+# Replace two response values with missing values
+resp[3] <- NA_real_
+resp[45] <- NA_real_
+
+# Test function with and without na.rm=TRUE to remove missings
+
+getDev(resp,pred)
+getDev(resp,pred,na.rm=TRUE)
+```
+We see again that without specifying `na.rm=TRUE`, the wrapper function returns `NA` for both metrics. When we add the argument to remove the missing values, the function returns valid metric values.
+
+As a final check of the function, we'll try passing the data frame `cars` instead of a vector for the response:
+
+```{r}
+#| error: true
+
+getDev(cars,pred)
+```
+
+
+## Querying an API and a Tidy-Style Function
+
+For this task, we'll first test a query from NewsAPI by retrieving data for stories about Apple between 1 October and 15 October:
+
+```{r}
+
+news_test <- "https://newsapi.org/v2/everything?q=apple&from=2024-10-01&to=2024-10-15&sortBy=popularity&apiKey=faf3bacb727e4d8185a26d37e070b361"
+
+news_test_tbl <- httr::GET(news_test) 
+parsed<-fromJSON(rawToChar(news_test_tbl$content),flatten = TRUE, simplifyDataFrame = TRUE)
+articles <- parsed |> pluck("articles")
+```
+
+Next, we create a custom function that allows a user to specify a topic, a date to start the search, and an API key. The function will return the `articles` data frame from the query:
+
+```{r}
+
+getNews <- function(topic,from=today(),apikey="faf3bacb727e4d8185a26d37e070b361") {
+  
+  start_url <-"https://newsapi.org/v2/everything?q="
+  end_url <-"&sortBy=popularity&apiKey="
+  from_dt <-ymd(from)
+  to_dt <- ymd(today())
+  topic_url <- noquote(topic)
+  complete_url<-paste0(start_url,topic_url,"&from=",from_dt,"&to=",to_dt,end_url,apikey)
+
+  raw_data <- httr::GET(complete_url)
+  parsed_data <- fromJSON(rawToChar(raw_data$content),flatten = TRUE, simplifyDataFrame = TRUE)
+  articles <- parsed |> pluck("articles")
+  return(articles)
+}
+
+```
+
+Let's get information about stories involving Toyota and stories about Tesla:
+
+```{r}
+toyota_data <- getNews(topic="toyota")
+tesla_data <- getNews(topic="tesla")
+```
+
+We can see the sources of the stories by summarizing on the `source.name` variable in the Toyota data:
+
+```{r}
+table(toyota_data$source.name)
+```
+
+Next, we'll turn the information in the variable `publishedAt` into a new column containing only the date of publication for each data frame. We will then sort on the publication date and compute the difference in days between each publication and the one before it:
+
+```{r}
+toyota_data_2 <- toyota_data |> mutate(publishedDate = date(ymd_hms(publishedAt))) |>arrange(publishedDate) |> mutate(pub_diff=publishedDate-lag(publishedDate))
+
+tesla_data_2 <- tesla_data |> mutate(publishedDate = date(ymd_hms(publishedAt))) |>arrange(publishedDate) |> mutate(pub_diff=publishedDate-lag(publishedDate))
+```
+
+Lastly, we'll keep on the publication date and difference columns of each data frame and summarize them:
+```{r}
+toyota_final <- toyota_data_2 |> select(publishedDate, pub_diff)
+tesla_final <- tesla_data_2 |> select(publishedDate, pub_diff)
+
+toyota_summary<-map(toyota_final,\(x) list(mean=mean(x,na.rm=TRUE),sd=sd(x,na.rm=TRUE),median=median(x,na.rm=TRUE)))
+
+tesla_summary<-map(tesla_final,\(x) list(mean=mean(x,na.rm=TRUE),sd=sd(x,na.rm=TRUE),median=median(x,na.rm=TRUE)))
+
+list(toyota=toyota_summary,tesla=tesla_summary)
+```
+
